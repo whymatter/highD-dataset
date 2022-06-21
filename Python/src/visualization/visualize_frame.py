@@ -1,12 +1,12 @@
 import os
-import scipy.ndimage
+from matplotlib.pyplot import imread
 import matplotlib as mpl
 
 from data_management.read_csv import *
 
 mpl.rcParams['savefig.dpi'] = 300
 import matplotlib.pyplot as plt
-from matplotlib.widgets import Button
+from matplotlib.widgets import Button, TextBox
 from utils.plot_utils import DiscreteSlider
 
 
@@ -22,6 +22,7 @@ class VisualizationPlot(object):
         self.changed_button = False
         self.rect_map = {}
         self.plotted_objects = []
+        self.ego_vehicle = None
 
         # Create figure and axes
         if fig is None:
@@ -36,7 +37,7 @@ class VisualizationPlot(object):
         background_image_path = arguments["background_image"]
         if background_image_path is not None and os.path.exists(background_image_path):
             # Plot the image
-            self.background_image = scipy.ndimage.imread(background_image_path)
+            self.background_image = imread(background_image_path)
             self.y_sign = 1
             im = self.background_image[:, :, :]
             self.ax.imshow(im)
@@ -58,6 +59,7 @@ class VisualizationPlot(object):
         self.ax_button_previous = self.fig.add_axes([0.05, 0.035, 0.02, 0.07])  # Previous button
         self.ax_button_next = self.fig.add_axes([0.325, 0.035, 0.02, 0.07])  # Next button
         self.ax_button_next2 = self.fig.add_axes([0.35, 0.035, 0.025, 0.07])  # Next x5 button
+        self.ax_button_trackId = self.fig.add_axes([0.4, 0.035, 0.025, 0.07])  # Next x5 button
 
         # Define the widgets
         self.frame_slider = DiscreteSlider(self.ax_slider, 'Frame', 1, self.maximum_frames, valinit=self.current_frame,
@@ -66,6 +68,7 @@ class VisualizationPlot(object):
         self.button_previous = Button(self.ax_button_previous, 'Previous')
         self.button_next = Button(self.ax_button_next, 'Next')
         self.button_next2 = Button(self.ax_button_next2, 'Next x5')
+        self.button_trackId = TextBox(self.ax_button_trackId, 'TrackId')
 
         # Define the callbacks for the widgets' actions
         self.frame_slider.on_changed(self.update_slider)
@@ -73,8 +76,25 @@ class VisualizationPlot(object):
         self.button_next.on_clicked(self.update_button_next)
         self.button_previous2.on_clicked(self.update_button_previous2)
         self.button_next2.on_clicked(self.update_button_next2)
+        self.button_trackId.on_submit(self.update_track_id)
 
         self.ax.set_autoscale_on(False)
+
+        self.fig.canvas.mpl_connect('key_press_event', self.on_key_press)
+
+    def on_key_press(self, event):
+        if event.key == 'right':
+            self.update_button_next2(None)
+        elif event.key == 'left':
+            self.update_button_previous2(None)
+
+
+    def update_track_id(self, value):
+        track_id = int(value)
+        self.ego_vehicle = track_id
+        static_track_information = self.static_info[track_id]
+        self.current_frame = static_track_information[INITIAL_FRAME]
+        self.trigger_update()
 
     def update_slider(self, value):
         if not self.changed_button:
@@ -123,13 +143,6 @@ class VisualizationPlot(object):
         self.fig.canvas.draw_idle()
 
     def update_figure(self):
-        # Dictionaries for the style of the different objects that are visualized
-        rect_style = dict(facecolor="r", fill=True, edgecolor="k", zorder=19)
-        triangle_style = dict(facecolor="k", fill=True, edgecolor="k", lw=0.1, alpha=0.6, zorder=19)
-        text_style = dict(picker=True, size=8, color='k', zorder=10, ha="center")
-        text_box_style = dict(boxstyle="round,pad=0.2", fc="yellow", alpha=.6, ec="black", lw=0.2)
-        track_style = dict(color="r", linewidth=1, zorder=10)
-
         # Plot the bounding boxes, their text annotations and direction arrow
         plotted_objects = []
         for track in self.tracks:
@@ -138,6 +151,19 @@ class VisualizationPlot(object):
             static_track_information = self.static_info[track_id]
             # Get the initial and final frame of the track and check whether the current chosen frame is within these
             # bounds
+
+            # Dictionaries for the style of the different objects that are visualized
+            rect_style = dict(facecolor="r", fill=True, edgecolor="k", zorder=19)
+            triangle_style = dict(facecolor="k", fill=True, edgecolor="k", lw=0.1, alpha=0.6, zorder=19)
+            text_style = dict(picker=True, size=8, color='k', zorder=10, ha="center")
+            text_box_style = dict(boxstyle="round,pad=0.2", fc="yellow", alpha=.6, ec="black", lw=0.2)
+            track_style = dict(color="r", linewidth=1, zorder=10)
+
+            if track_id == self.ego_vehicle:
+                # Dictionaries for the style of the different objects that are visualized
+                rect_style = dict(facecolor="b", fill=True, edgecolor="k", zorder=19)
+                track_style = dict(color="b", linewidth=1, zorder=10)
+
             initial_frame = static_track_information[INITIAL_FRAME]
             final_frame = static_track_information[FINAL_FRAME]
             if initial_frame <= self.current_frame < final_frame:
@@ -214,7 +240,10 @@ class VisualizationPlot(object):
 
                 # Plot tracking line for each vehicle
                 if self.arguments["plotTrackingLines"]:
-                    relevant_bounding_boxes = np.array(track[BBOX][0:current_index, :])
+
+                    start_frame = 0 if self.ego_vehicle is None else self.static_info[self.ego_vehicle][INITIAL_FRAME] - initial_frame
+
+                    relevant_bounding_boxes = np.array(track[BBOX][start_frame:current_index, :])
                     if relevant_bounding_boxes.shape[0] > 0:
                         if self.arguments["background_image"] is not None:
                             relevant_bounding_boxes /= 0.10106
@@ -234,6 +263,9 @@ class VisualizationPlot(object):
                 # Save the plotted objects in a list
         self.fig.canvas.mpl_connect('pick_event', self.on_click)
         self.plotted_objects = plotted_objects
+
+        self.ax.axvline(x=60, color='b')
+        self.ax.axvline(x=360, color='b')
 
     def plot_highway(self):
         # Initialization
